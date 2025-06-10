@@ -5,7 +5,7 @@
 import math
 from gurobipy import *
 from InsData.Instance import Instance
-from typing import Dict
+from typing import Dict, Union
 from Common import get_truck_and_drone_routes, get_serve_time
 
 
@@ -29,14 +29,15 @@ class Grb(object):
         self.Q_c: Dict[int, Var] = dict()
         self.Gamma_t: Dict[tuple, Var] = dict()
         self.Gamma_d: Dict[tuple, Var] = dict()
-        self.Eta_t: Dict[tuple, Var] = dict()
-        self.Eta_d: Dict[tuple, Var] = dict()
-        self.Z: Dict[tuple, Var] = dict()     # denote c-drone wait for truck at node i
+        # self.Eta_t: Dict[tuple, Var] = dict()
+        # self.Eta_d: Dict[tuple, Var] = dict()
+        self.Z: Dict[tuple, Var] = dict()  # denote c-drone wait for truck at node i
 
         # power consumption
         self.averageW: Dict[tuple, Var] = dict()
 
-        self.cons: Dict[str, Constr] = dict()
+        un = Union[QConstr, GenConstr, Constr]
+        self.cons: Dict[str, un] = dict()
 
         self.obj = 0
         self.obj_1 = LinExpr()
@@ -111,14 +112,14 @@ class Grb(object):
                 if self.Z[z].x >= 0.95:
                     print(f'{self.Z[z].varName}={self.Z[z].x}')
 
-            print('*' * 30, 'customer assignment', '*' * 30)
-            for eta in self.Eta_t.keys():
-                if self.Eta_t[eta].x >= 0.95:
-                    print(f'{self.Eta_t[eta].varName}={self.Eta_t[eta].x}')
-
-            for eta in self.Eta_d.keys():
-                if self.Eta_d[eta].x >= 0.95:
-                    print(f'{self.Eta_d[eta].varName}={self.Eta_d[eta].x}')
+            # print('*' * 30, 'customer assignment', '*' * 30)
+            # for eta in self.Eta_t.keys():
+            #     if self.Eta_t[eta].x >= 0.95:
+            #         print(f'{self.Eta_t[eta].varName}={self.Eta_t[eta].x}')
+            #
+            # for eta in self.Eta_d.keys():
+            #     if self.Eta_d[eta].x >= 0.95:
+            #         print(f'{self.Eta_d[eta].varName}={self.Eta_d[eta].x}')
             print('*' * 30, 'satisfaction', '*' * 30)
             print(satisfaction)
 
@@ -175,10 +176,300 @@ class Grb(object):
         return p_to_and_ld + p_cruise
 
     def _add_vars(self):
-        pass
+        for c in range(self._ins.para.droneMaxGroup):
+            self.Zeta[c] = self.model.addVar(lb=0.0,
+                                             ub=self._ins.para.L,
+                                             obj=0,
+                                             vtype=GRB.INTEGER,
+                                             column=None,
+                                             name='zeta_' + str(c))
+
+            self.Q_c[c] = self.model.addVar(lb=0.0,
+                                            ub=self._ins.para.L * self._ins.para.singleQ,
+                                            obj=0,
+                                            vtype=GRB.CONTINUOUS,
+                                            column=None,
+                                            name='q_c_' + str(c))
+
+            for i in range(1, self._ins.cusNum + 1):
+                self.Z[i, c] = self.model.addVar(lb=0.0,
+                                                 ub=1.0,
+                                                 obj=0,
+                                                 vtype=GRB.BINARY,
+                                                 column=None,
+                                                 name='z_' + str(i) + '_' + str(c))
+
+        for i in range(self._ins.cusNum + 2):
+            for t in range(self._ins.truckNum):
+
+                self.Tau_t[i, t] = self.model.addVar(lb=0,
+                                                     ub=self._ins.graph.vertexDict[i].hardDueTime,
+                                                     obj=0,
+                                                     vtype=GRB.CONTINUOUS,
+                                                     column=None,
+                                                     name='tau_t_' + str(i) + '_' + str(t))
+
+                self.Gamma_t[i, t] = self.model.addVar(lb=0.0,
+                                                       ub=self._ins.truckCapacity,
+                                                       obj=0,
+                                                       vtype=GRB.CONTINUOUS,
+                                                       column=None,
+                                                       name='gamma_t_' + str(i) + '_' + str(t))
+
+                # self.Eta_t[i, t] = self.model.addVar(lb=0.0,
+                #                                      ub=1.0,
+                #                                      obj=0,
+                #                                      vtype=GRB.BINARY,
+                #                                      column=None,
+                #                                      name='eta_t_' + str(i) + '_' + str(t))
+
+                for j in range(self._ins.cusNum + 2):
+                    if self.check_arc_feasible(head_ver=i,
+                                               tail_ver=j,
+                                               t_or_d=0):
+                        self.X[i, j, t] = self.model.addVar(lb=0.0,
+                                                            ub=1.0,
+                                                            obj=0,
+                                                            vtype=GRB.BINARY,
+                                                            column=None,
+                                                            name='x_' + str(i) + '_' + str(j) + '_' + str(t))
+
+            for c in range(self._ins.para.droneMaxGroup):
+                self.Tau_d[i, c] = self.model.addVar(lb=0,
+                                                     ub=self._ins.graph.vertexDict[i].hardDueTime,
+                                                     obj=0,
+                                                     vtype=GRB.CONTINUOUS,
+                                                     column=None,
+                                                     name='tau_d_' + str(i) + '_' + str(c))
+
+                self.Gamma_d[i, c] = self.model.addVar(lb=0.0,
+                                                       ub=self._ins.para.L * self._ins.para.singleQ,
+                                                       obj=0,
+                                                       vtype=GRB.CONTINUOUS,
+                                                       column=None,
+                                                       name='gamma_d_' + str(i) + '_' + str(c))
+
+                # self.Eta_d[i, c] = self.model.addVar(lb=0.0,
+                #                                      ub=1.0,
+                #                                      obj=0,
+                #                                      vtype=GRB.BINARY,
+                #                                      column=None,
+                #                                      name='eta_d_' + str(i) + '_' + str(c))
+
+                self.Phi[i, c] = self.model.addVar(lb=0.0,
+                                                   ub=self._ins.para.B,
+                                                   obj=0,
+                                                   vtype=GRB.CONTINUOUS,
+                                                   column=None,
+                                                   name='phi_' + str(i) + '_' + str(c))
+
+                self.averageW[i, c] = self.model.addVar(lb=0.0,
+                                                        ub=self._ins.para.singleQ,
+                                                        obj=0,
+                                                        vtype=GRB.CONTINUOUS,
+                                                        column=None,
+                                                        name='averageWeight_' + str(i) + '_' + str(c))
+                con_name = 'average_weight_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addQConstr(
+                    self.averageW[i, c] * self.Zeta[c] - self.Gamma_d[i, c],
+                    sense='=',
+                    rhs=0,
+                    name=con_name)
+
+                # = (W+ω)*g
+                self.a_v[i, c] = self.model.addVar(lb=0.0,
+                                                   ub=(self._ins.demand_sum + self._ins.para.w_drone +
+                                                       self._ins.para.w_battery) * self._ins.para.gravity,
+                                                   obj=0,
+                                                   vtype=GRB.CONTINUOUS,
+                                                   column=None,
+                                                   name='a_v_' + str(i) + '_' + str(c))
+
+                # = v_v/2)^2 + t/k1^2
+                self.a_v_to[i, c] = self.model.addVar(lb=0.0,
+                                                      ub=1e9,
+                                                      obj=0,
+                                                      vtype=GRB.CONTINUOUS,
+                                                      column=None,
+                                                      name='a_v_to_' + str(i) + '_' + str(c))
+                self.a_v_ld[i, c] = self.model.addVar(lb=0.0,
+                                                      ub=1e9,
+                                                      obj=0,
+                                                      vtype=GRB.CONTINUOUS,
+                                                      column=None,
+                                                      name='a_v_ld_' + str(i) + '_' + str(c))
+
+                # = sqrt( (v_v/2)^2 + t/k1^2 )
+                self.a_v_to_sqrt[i, c] = self.model.addVar(lb=0.0,
+                                                           ub=1e9,
+                                                           obj=0,
+                                                           vtype=GRB.CONTINUOUS,
+                                                           column=None,
+                                                           name='a_v_to_sqrt_' + str(i) + '_' + str(c))
+                self.a_v_ld_sqrt[i, c] = self.model.addVar(lb=0.0,
+                                                           ub=1e9,
+                                                           obj=0,
+                                                           vtype=GRB.CONTINUOUS,
+                                                           column=None,
+                                                           name='a_v_ld_sqrt_' + str(i) + '_' + str(c))
+                # = (t)^(3/2)
+                self.a_v_pow[i, c] = self.model.addVar(lb=0.0,
+                                                       ub=1e9,
+                                                       obj=0,
+                                                       vtype=GRB.CONTINUOUS,
+                                                       column=None,
+                                                       name='a_v_pow_' + str(i) + '_' + str(c))
+
+                self.a_v_cr[i, c] = self.model.addVar(lb=0.0,
+                                                      ub=1e9,
+                                                      obj=0,
+                                                      vtype=GRB.CONTINUOUS,
+                                                      column=None,
+                                                      name='a_v_cr_' + str(i) + '_' + str(c))
+                # squared
+
+                self.a_v_squared[i, c] = self.model.addVar(lb=0.0,
+                                                           ub=1e9,
+                                                           obj=0,
+                                                           vtype=GRB.CONTINUOUS,
+                                                           column=None,
+                                                           name='a_v_squared_' + str(i) + '_' + str(c))
+                self.a_v_pow2[i, c] = self.model.addVar(lb=0.0,
+                                                        ub=1e9,
+                                                        obj=0,
+                                                        vtype=GRB.CONTINUOUS,
+                                                        column=None,
+                                                        name='a_v_pow2_' + str(i) + '_' + str(c))
+                self.model.update()
+                """ auxiliary variables """
+                con_name = 'a_v_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(self.a_v[i, c] - (
+                        self._ins.para.w_drone + self._ins.para.w_battery + self.averageW[
+                    i, c]) * self._ins.para.gravity == 0,
+                                                           name=con_name)
+
+                con_name = 'a_v_to_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(
+                    self.a_v_to[i, c] - (self._ins.para.droneTakeoffSpeed / 2) ** 2 - (self.a_v[i, c] / (
+                            self._ins.para.k_2 ** 2)) == 0,
+                    name=con_name)
+                con_name = 'a_v_ld_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(
+                    self.a_v_ld[i, c] - (self._ins.para.droneLandSpeed / 2) ** 2 - self.a_v[i, c] / (
+                            self._ins.para.k_2 ** 2) == 0,
+                    name=con_name)
+
+                con_name = 'a_v_pow_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addGenConstrPow(self.a_v[i, c], self.a_v_pow[i, c], 1.5,
+                                                                 name=con_name,
+                                                                 options="")
+
+                con_name = 'a_v_to_sqrt_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addGenConstrPow(self.a_v_to[i, c], self.a_v_to_sqrt[i, c], 0.5,
+                                                                 name=con_name,
+                                                                 options="")
+                con_name = 'a_v_ld_sqrt_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addGenConstrPow(self.a_v_ld[i, c], self.a_v_ld_sqrt[i, c], 0.5,
+                                                                 name=con_name,
+                                                                 options="")
+
+                con_name = 'a_v_cr_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(
+                    self.a_v_cr[i, c] - self.a_v[i, c] - self._ins.para.c_5 * (
+                            (self._ins.para.droneCruiseSpeed * math.cos(10)) ** 2) == 0,
+                    name=con_name
+                )
+
+                con_name = 'a_v_squared_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addGenConstrPow(self.a_v_squared[i, c], self.a_v_cr[i, c], 2,
+                                                                 name=con_name,
+                                                                 options="")
+                con_name = 'a_v_pow2_' + str(i) + '_' + str(c)
+                self.cons[con_name] = self.model.addGenConstrPow(self.a_v_squared[i, c], self.a_v_pow2[i, c], 0.75,
+                                                                 name=con_name,
+                                                                 options="")
+                for j in range(self._ins.cusNum + 2):
+                    if self.check_arc_feasible(head_ver=i,
+                                               tail_ver=j,
+                                               t_or_d=1):
+                        self.Xi[i, j, c] = self.model.addVar(lb=0.0,
+                                                             ub=1.0,
+                                                             obj=0,
+                                                             vtype=GRB.BINARY,
+                                                             column=None,
+                                                             name='xi_' + str(i) + '_' + str(j) + '_' + str(c))
 
     def _set_obj(self):
-        pass
+        """ obj1: travel cost and drone fixed cost """
+        # obj_1 = LinExpr()
+        obj_1_coe = list()
+        obj_1_var = list()
+
+        for i in range(self._ins.cusNum + 1):
+            for j in range(self._ins.cusNum + 2):
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=j,
+                                           t_or_d=0):
+                    for t in range(self._ins.truckNum):
+                        obj_1_coe.append(self._ins.graph.arcDict[i, j].mDistance)
+                        obj_1_var.append(self.X[i, j, t])
+
+            for j in self._ins.graph.cus_drone + [self._ins.cusNum + 1]:
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=j,
+                                           t_or_d=1):
+                    for c in range(self._ins.para.droneMaxGroup):
+                        obj_1_coe.append((self._ins.graph.arcDict[i, j].eDistance / 1) * self._ins.para.cost_2)
+                        obj_1_var.append(self.Xi[i, j, c])
+
+        for c in range(self._ins.para.droneMaxGroup):
+            obj_1_coe.append(self._ins.para.cost_1)
+            obj_1_var.append(self.Zeta[c])
+        self.obj_1.addTerms(obj_1_coe, obj_1_var)
+
+        """ obj2: satisfaction, PWL """
+        # obj_2 = LinExpr()
+        obj_2_coe = list()
+        obj_2_var = list()
+        for i in range(1, self._ins.cusNum + 1):
+            cur_time_point = [self._ins.graph.vertexDict[i].hardReadyTime, self._ins.graph.vertexDict[i].softReadyTime,
+                              self._ins.graph.vertexDict[i].softDueTime, self._ins.graph.vertexDict[i].hardDueTime]
+
+            # satis_point = [0, 1, 1, 0]
+            satis_point = [0, 100, 100, 0]
+
+            self.satis_var_t[i] = self.model.addVar(lb=0.0,
+                                                    ub=1.0,
+                                                    obj=0,
+                                                    vtype=GRB.INTEGER,
+                                                    column=None,
+                                                    name='satisfaction_t_' + str(i))
+
+            self.satis_var_d[i] = self.model.addVar(lb=0.0,
+                                                    ub=1.0,
+                                                    obj=0,
+                                                    vtype=GRB.INTEGER,
+                                                    column=None,
+                                                    name='satisfaction_d_' + str(i))
+
+            for t in range(self._ins.truckNum):
+                self.satis_con[i, t] = self.model.addGenConstrPWL(self.Tau_t[i, t], self.satis_var_t[i],
+                                                                  cur_time_point, satis_point,
+                                                                  name="satis_t_" + str(i) + '_' + str(t))
+            obj_2_coe.append(1)
+            obj_2_var.append(self.satis_var_t[i])
+
+            for c in range(self._ins.para.droneMaxGroup):
+                self.satis_con[i, c] = self.model.addGenConstrPWL(self.Tau_d[i, c], self.satis_var_d[i],
+                                                                  cur_time_point, satis_point,
+                                                                  name="satis_d_" + str(i) + '_' + str(c))
+            obj_2_coe.append(1)
+            obj_2_var.append(self.satis_var_d[i])
+
+        self.obj_2.addTerms(obj_2_coe, obj_2_var)
+
+        self.obj = self.obj_1 - self.obj_2
+        self.model.setObjective(self.obj, GRB.MINIMIZE)
 
     def _add_cons(self):
         big_m_t = 0
@@ -194,3 +485,249 @@ class Grb(object):
                 big_m_d = max(
                     self._ins.graph.vertexDict[i].hardDueTime + self._ins.graph.arcDict[i, j].droneTravelTime -
                     self._ins.graph.vertexDict[i].hardReadyTime, big_m_d)
+
+        """ con.1: must serve customer """
+        for i in range(1, self._ins.cusNum + 1):
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+
+            # truck
+            # for t in range(self._ins.truckNum):
+            #     coe.append(1)
+            #     var.append(self.Eta_t[i, t])
+
+            # c-drones
+            # if i in self._ins.graph.cus_drone:
+            #     for c in range(self._ins.para.droneMaxGroup):
+            #         coe.append(1)
+            #         var.append(self.Eta_d[i, c])
+
+            lhs.addTerms(coe, var)
+            con_name = 'con1_' + str(i)
+            self.cons[con_name] = self.model.addConstr(
+                lhs == 1,
+                name=con_name
+            )
+
+        """ con.2: customer can only be served by one truck """
+        for l in range(1, self._ins.cusNum + 1):
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+
+            for i in range(self._ins.cusNum + 1):
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=l,
+                                           t_or_d=0):
+                    for t in range(self._ins.truckNum):
+                        coe.append(1)
+                        var.append(self.X[i, l, t])
+            lhs.addTerms(coe, var)
+            con_name = 'con2_' + str(l)
+            self.cons[con_name] = self.model.addConstr(
+                lhs <= 1,
+                name=con_name
+            )
+
+        """ con.3: truck must start from depot """
+        for t in range(self._ins.truckNum):
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+            for j in range(1, self._ins.cusNum + 2):
+                if self.check_arc_feasible(head_ver=0,
+                                           tail_ver=j,
+                                           t_or_d=0):
+                    coe.append(1)
+                    var.append(self.X[0, j, t])
+            lhs.addTerms(coe, var)
+            con_name = 'con3_' + str(t)
+            self.cons[con_name] = self.model.addConstr(lhs == 1,
+                                                       name=con_name)
+
+            """ con.4: truck must return to depot """
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+            for i in range(self._ins.cusNum + 1):
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=self._ins.cusNum + 1,
+                                           t_or_d=0):
+                    coe.append(1)
+                    var.append(self.X[i, self._ins.cusNum + 1, t])
+            lhs.addTerms(coe, var)
+            con_name = 'con4_' + str(t)
+            self.cons[con_name] = self.model.addConstr(lhs == 1,
+                                                       name=con_name)
+
+        """ con.5: flow balance of truck """
+        for l in range(1, self._ins.cusNum + 1):
+            for t in range(self._ins.truckNum):
+                lhs = LinExpr()
+                coe = list()
+                var = list()
+
+                for i in range(self._ins.cusNum + 1):
+                    if self.check_arc_feasible(head_ver=i,
+                                               tail_ver=l,
+                                               t_or_d=0):
+                        coe.append(1)
+                        var.append(self.X[i, l, t])
+
+                for j in range(1, self._ins.cusNum + 2):
+                    if self.check_arc_feasible(head_ver=l,
+                                               tail_ver=j,
+                                               t_or_d=0):
+                        coe.append(-1)
+                        var.append(self.X[l, j, t])
+                lhs.addTerms(coe, var)
+                con_name = 'con5-' + str(l) + '_' + str(t)
+                self.cons[con_name] = self.model.addConstr(lhs == 0,
+                                                           name=con_name)
+
+        """ con.6: time continuous truck """
+        for i in range(self._ins.cusNum + 1):
+            for j in range(self._ins.cusNum + 2):
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=j,
+                                           t_or_d=0):
+                    for t in range(self._ins.truckNum):
+                        con_name = 'con6-' + str(i) + '_' + str(j) + '_' + str(t)
+                        self.cons[con_name] = self.model.addConstr(
+                            self.Tau_t[i, t] + self._ins.para.serviceTime + self._ins.graph.arcDict[
+                                i, j].truckTravelTime - big_m_t * (1 - self.X[i, j, t]) - self.Tau_t[
+                                j, t] <= 0,
+                            name=con_name)
+
+        """ con.7: load continuous truck """
+        for i in range(self._ins.cusNum + 1):
+            for j in range(self._ins.cusNum + 2):
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=j,
+                                           t_or_d=0):
+                    for t in range(self._ins.truckNum):
+                        con_name = 'con7-' + str(i) + '_' + str(j) + '_' + str(t)
+                        self.cons[con_name] = self.model.addConstr(
+                            self.Gamma_t[i, t] + self._ins.graph.vertexDict[j].demand - self._ins.truckCapacity * (
+                                    1 - self.X[i, j, t]) - self.Gamma_t[j, t] <= 0,
+                            name=con_name)
+
+        """ con.8: c-drone start and scale """
+        for c in range(self._ins.para.droneMaxGroup):
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+            for j in self._ins.graph.cus_drone:
+                if self.check_arc_feasible(head_ver=0,
+                                           tail_ver=j,
+                                           t_or_d=1):
+                    coe.append(1)
+                    var.append(self.Xi[0, j, c])
+            lhs.addTerms(coe, var)
+            con_name = 'con8-' + str(c)
+            self.cons[con_name] = self.model.addConstr(lhs - self.Zeta[c] <= 0,
+                                                       name=con_name)
+
+        """ con.9: c-drone scale ub """
+        lhs = LinExpr()
+        coe = list()
+        var = list()
+        for c in range(self._ins.para.droneMaxGroup):
+            coe.append(1)
+            var.append(self.Zeta[c])
+        lhs.addTerms(coe, var)
+        con_name = 'con9'
+        self.cons[con_name] = self.model.addConstr(lhs - self._ins.para.m <= 0,
+                                                   name=con_name)
+
+        """ con.10: c-drones must start from depot """
+        for c in range(self._ins.para.droneMaxGroup):
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+            for j in self._ins.graph.cus_drone + [self._ins.cusNum + 1]:
+                if self.check_arc_feasible(head_ver=0,
+                                           tail_ver=j,
+                                           t_or_d=1):
+                    coe.append(1)
+                    var.append(self.Xi[0, j, c])
+            lhs.addTerms(coe, var)
+            con_name = 'con10_' + str(c)
+            self.cons[con_name] = self.model.addConstr(lhs == 1,
+                                                       name=con_name)
+
+            """ con.11: c-drone must return to depot or a truck """
+            lhs = LinExpr()
+            coe = list()
+            var = list()
+
+            # end of depot
+            for i in self._ins.graph.cus_drone + [0]:
+                if self.check_arc_feasible(head_ver=i,
+                                           tail_ver=self._ins.cusNum + 1,
+                                           t_or_d=1):
+                    coe.append(1)
+                    var.append(self.Xi[i, self._ins.cusNum + 1, c])
+
+            # end of customer
+            for i in self._ins.graph.cus_drone:
+                for t in range(self._ins.truckNum):
+                    coe.append(1)
+                    var.append(self.Z[i, c])
+
+            lhs.addTerms(coe, var)
+            con_name = 'con11_' + str(c)
+            self.cons[con_name] = self.model.addConstr(lhs == 1,
+                                                       name=con_name)
+
+            """ con.12: flow balance of c-drones """
+            for l in self._ins.graph.cus_drone:
+                lhs = LinExpr()
+                coe = list()
+                var = list()
+
+                for i in self._ins.graph.cus_drone + [0]:
+                    if self.check_arc_feasible(head_ver=i,
+                                               tail_ver=l,
+                                               t_or_d=1):
+                        coe.append(1)
+                        var.append(self.Xi[i, l, c])
+
+                for j in self._ins.graph.cus_drone + [self._ins.cusNum + 1]:
+                    if self.check_arc_feasible(head_ver=l,
+                                               tail_ver=j,
+                                               t_or_d=1):
+                        coe.append(-1)
+                        var.append(self.Xi[l, j, c])
+
+                lhs.addTerms(coe, var)
+                con_name = 'con12_' + str(l) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(lhs == self.Z[l, c],
+                                                           name=con_name)
+
+                """ con.13: c-drones is picked only when a truck travel """
+                lhs = LinExpr()
+                coe = list()
+                var = list()
+                for j in range(1, self._ins.cusNum + 2):
+                    if self.check_arc_feasible(head_ver=l,
+                                               tail_ver=j,
+                                               t_or_d=0):
+                        for t in range(self._ins.truckNum):
+                            coe.append(1)
+                            var.append(self.X[l, j, t])
+                lhs.addTerms(coe, var)
+                con_name = 'con13_' + str(l) + '_' + str(c)
+                self.cons[con_name] = self.model.addConstr(self.Z[l, c] <= lhs,
+                                                           name=con_name)
+
+                """ con.14: c-drones is picked only when it arrive before a truck """
+                for i in range(self._ins.cusNum + 1):
+                    if self.check_arc_feasible(head_ver=i,
+                                               tail_ver=l,
+                                               t_or_d=0):
+                        for t in range(self._ins.truckNum):
+                            con_name = 'con14_' + str(j) + '_' + str(l) + '_' + str(c)
+                            self.cons[con_name] = self.model.addConstr(self.Z[l, c] <= lhs,
+                                                                       name=con_name)
