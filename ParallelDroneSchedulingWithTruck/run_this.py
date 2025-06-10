@@ -7,6 +7,8 @@ from InsData.Paramerters import Parameters
 from Common import *
 from GurobiFiles.Grb import Grb
 
+""" git push test """
+
 filepath = 'Benchmark/solomon100/r101.txt'
 para = Parameters()
 ins = Instance(para=para)
